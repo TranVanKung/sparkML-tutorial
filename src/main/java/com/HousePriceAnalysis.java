@@ -3,6 +3,8 @@ package com;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.apache.spark.ml.evaluation.RegressionEvaluator;
+import org.apache.spark.ml.feature.OneHotEncoderEstimator;
+import org.apache.spark.ml.feature.StringIndexer;
 import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.ml.param.ParamMap;
 import org.apache.spark.ml.regression.LinearRegression;
@@ -30,10 +32,35 @@ public class HousePriceAnalysis {
 //        System.out.println(csvData.count());
 
         csvData = csvData.withColumn("sqft_above_percentage", functions.col("sqft_above").divide(functions.col("sqft_living")));
-        csvData.show();
-        
+//        csvData.show();
+
+        StringIndexer conditionIndexer = new StringIndexer();
+        conditionIndexer.setInputCol("condition");
+        conditionIndexer.setOutputCol("conditionIndex");
+        csvData = conditionIndexer.fit(csvData).transform(csvData);
+
+        StringIndexer gradeIndexer = new StringIndexer();
+        gradeIndexer.setInputCol("grade");
+        gradeIndexer.setOutputCol("gradeIndex");
+        csvData = gradeIndexer.fit(csvData).transform(csvData);
+
+        StringIndexer zipcodeIndexer = new StringIndexer();
+        zipcodeIndexer.setInputCol("zipcode");
+        zipcodeIndexer.setOutputCol("zipcodeIndex");
+        csvData = zipcodeIndexer.fit(csvData).transform(csvData);
+
+        OneHotEncoderEstimator encoder = new OneHotEncoderEstimator();
+        encoder.setInputCols(new String[]{"conditionIndex", "gradeIndex", "zipcodeIndex"});
+        encoder.setOutputCols(new String[]{"conditionVector", "gradeVector", "zipcodeVector"});
+        csvData = encoder.fit(csvData).transform(csvData);
+//        csvData.show();
+
         VectorAssembler vectorAssembler = new VectorAssembler();
-        vectorAssembler.setInputCols(new String[]{"bedrooms", "bathrooms", "sqft_living", "sqft_above_percentage", "floors"});
+        vectorAssembler.setInputCols(
+                new String[]{
+                        "bedrooms", "bathrooms", "sqft_living", "sqft_above_percentage", "floors",
+                        "conditionVector", "gradeVector", "zipcodeVector", "waterfront"
+                });
         vectorAssembler.setOutputCol("features");
         Dataset<Row> modelInputData = vectorAssembler.
                 transform(csvData)
