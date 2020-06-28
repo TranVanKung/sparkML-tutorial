@@ -2,6 +2,9 @@ package com;
 
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
+import org.apache.spark.ml.Pipeline;
+import org.apache.spark.ml.PipelineModel;
+import org.apache.spark.ml.PipelineStage;
 import org.apache.spark.ml.evaluation.RegressionEvaluator;
 import org.apache.spark.ml.feature.OneHotEncoderEstimator;
 import org.apache.spark.ml.feature.StringIndexer;
@@ -31,45 +34,45 @@ public class HousePriceAnalysis {
 //        csvData.printSchema();
 //        System.out.println(csvData.count());
 
-        csvData = csvData.withColumn("sqft_above_percentage", functions.col("sqft_above").divide(functions.col("sqft_living")));
-//        csvData.show();
+        csvData = csvData
+                .withColumn("sqft_above_percentage", functions.col("sqft_above").divide(functions.col("sqft_living")))
+                .withColumnRenamed("price", "label");
+
+        Dataset<Row>[] dataSplits = csvData.randomSplit(new double[]{0.8, 0.2});
+        Dataset<Row> trainingAndTestData = dataSplits[0];
+        Dataset<Row> holdOutData = dataSplits[1];
 
         StringIndexer conditionIndexer = new StringIndexer();
         conditionIndexer.setInputCol("condition");
         conditionIndexer.setOutputCol("conditionIndex");
-        csvData = conditionIndexer.fit(csvData).transform(csvData);
 
         StringIndexer gradeIndexer = new StringIndexer();
         gradeIndexer.setInputCol("grade");
         gradeIndexer.setOutputCol("gradeIndex");
-        csvData = gradeIndexer.fit(csvData).transform(csvData);
 
         StringIndexer zipcodeIndexer = new StringIndexer();
         zipcodeIndexer.setInputCol("zipcode");
         zipcodeIndexer.setOutputCol("zipcodeIndex");
-        csvData = zipcodeIndexer.fit(csvData).transform(csvData);
 
         OneHotEncoderEstimator encoder = new OneHotEncoderEstimator();
         encoder.setInputCols(new String[]{"conditionIndex", "gradeIndex", "zipcodeIndex"});
         encoder.setOutputCols(new String[]{"conditionVector", "gradeVector", "zipcodeVector"});
-        csvData = encoder.fit(csvData).transform(csvData);
-//        csvData.show();
 
-        VectorAssembler vectorAssembler = new VectorAssembler();
-        vectorAssembler.setInputCols(
-                new String[]{
-                        "bedrooms", "bathrooms", "sqft_living", "sqft_above_percentage", "floors",
-                        "conditionVector", "gradeVector", "zipcodeVector", "waterfront"
-                });
-        vectorAssembler.setOutputCol("features");
-        Dataset<Row> modelInputData = vectorAssembler.
-                transform(csvData)
-                .select("price", "features")
-                .withColumnRenamed("price", "label");
-//        modelInputData.show();
-        Dataset<Row>[] dataSplits = modelInputData.randomSplit(new double[]{0.8, 0.2});
-        Dataset<Row> trainingAndTestData = dataSplits[0];
-        Dataset<Row> holdOutData = dataSplits[1];
+        VectorAssembler vectorAssembler = new VectorAssembler()
+                .setInputCols(
+                        new String[]{
+                                "bedrooms", "bathrooms", "sqft_living", "sqft_above_percentage", "floors",
+                                "conditionVector", "gradeVector", "zipcodeVector", "waterfront"
+                        })
+                .setOutputCol("features");
+
+        VectorAssembler vectorAssembler2 = new VectorAssembler()
+                .setInputCols(
+                        new String[]{
+                                "bedrooms", "sqft_living", "sqft_above_percentage", "floors",
+                                "conditionVector", "gradeVector", "zipcodeVector", "waterfront"
+                        })
+                .setOutputCol("features");
 
         LinearRegression linearRegression = new LinearRegression();
         ParamGridBuilder paramGridBuilder = new ParamGridBuilder();
@@ -85,8 +88,17 @@ public class HousePriceAnalysis {
                 .setEstimatorParamMaps(paramMap)
                 .setTrainRatio(0.8);
 
-        TrainValidationSplitModel model = trainValidationSplit.fit(trainingAndTestData);
+        Pipeline pipeline = new Pipeline();
+        pipeline.setStages(new PipelineStage[]{
+                conditionIndexer, gradeIndexer, zipcodeIndexer, encoder, vectorAssembler, trainValidationSplit
+        });
+        PipelineModel pipelineModel = pipeline.fit(trainingAndTestData);
+        TrainValidationSplitModel model = (TrainValidationSplitModel) pipelineModel.stages()[5];
         LinearRegressionModel lrModel = (LinearRegressionModel) model.bestModel();
+
+        Dataset<Row> holdOutResults = pipelineModel.transform((holdOutData));
+        holdOutResults.show();
+        holdOutResults = holdOutResults.drop("prediction");
 
         System.out.println("r2 value: " + lrModel.summary().r2());
         System.out.println("RMSE value: " + lrModel.summary().rootMeanSquaredError());
