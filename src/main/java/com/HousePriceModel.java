@@ -2,11 +2,14 @@ package com;
 
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
+import org.apache.spark.ml.evaluation.RegressionEvaluator;
 import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.ml.param.ParamMap;
 import org.apache.spark.ml.regression.LinearRegression;
 import org.apache.spark.ml.regression.LinearRegressionModel;
 import org.apache.spark.ml.tuning.ParamGridBuilder;
+import org.apache.spark.ml.tuning.TrainValidationSplit;
+import org.apache.spark.ml.tuning.TrainValidationSplitModel;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -33,9 +36,9 @@ public class HousePriceModel {
                 .select("price", "features")
                 .withColumnRenamed("price", "label");
 //        modelInputData.show();
-        Dataset<Row>[] trainingAndTestData = modelInputData.randomSplit(new double[]{0.8, 0.2});
-        Dataset<Row> trainingData = trainingAndTestData[0];
-        Dataset<Row> testData = trainingAndTestData[1];
+        Dataset<Row>[] dataSplits = modelInputData.randomSplit(new double[]{0.8, 0.2});
+        Dataset<Row> trainingAndTestData = dataSplits[0];
+        Dataset<Row> holdOutData = dataSplits[1];
 
         LinearRegression linearRegression = new LinearRegression();
         ParamGridBuilder paramGridBuilder = new ParamGridBuilder();
@@ -45,12 +48,23 @@ public class HousePriceModel {
                 new double[]{0, 0.5, 1}
         ).build();
 
-        System.out.println("r2 value: " + model.summary().r2());
-        System.out.println("RMSE value: " + model.summary().rootMeanSquaredError());
+        TrainValidationSplit trainValidationSplit = new TrainValidationSplit()
+                .setEstimator(linearRegression)
+                .setEvaluator(new RegressionEvaluator().setMetricName("r2"))
+                .setEstimatorParamMaps(paramMap)
+                .setTrainRatio(0.8);
 
-        model.transform(testData).show();
-        System.out.println("r2 value for test data: " + model.evaluate(testData).r2());
-        System.out.println("RMSE value for test data: " + model.evaluate(testData).rootMeanSquaredError());
+        TrainValidationSplitModel model = trainValidationSplit.fit(trainingAndTestData);
+        LinearRegressionModel lrModel = (LinearRegressionModel) model.bestModel();
+
+        System.out.println("r2 value: " + lrModel.summary().r2());
+        System.out.println("RMSE value: " + lrModel.summary().rootMeanSquaredError());
+
+//        lrModel.transform(holdOutData).show();
+        System.out.println("r2 value for test data: " + lrModel.evaluate(holdOutData).r2());
+        System.out.println("RMSE value for test data: " + lrModel.evaluate(holdOutData).rootMeanSquaredError());
+        System.out.println("weight: " + lrModel.coefficients() + " intercept: " + lrModel.intercept());
+        System.out.println("regparam: " + lrModel.getRegParam() + " elastic net param: " + lrModel.getElasticNetParam());
     }
 
 }
