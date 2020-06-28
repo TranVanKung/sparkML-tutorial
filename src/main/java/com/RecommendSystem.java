@@ -38,6 +38,7 @@ public class RecommendSystem {
                 .setRatingCol("proportionWatched");
 
         ALSModel model = als.fit(trainingData);
+        model.setColdStartStrategy("drop");
         Dataset<Row> userRecs = model.recommendForAllUsers(5);
 
         List<Row> userRecsList = userRecs.takeAsList(5);
